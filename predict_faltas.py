@@ -115,40 +115,39 @@ def ejecutar():
     modelo = RandomForestClassifier()
     modelo.fit(X_train, y_train)
 
-    print("Usando fecha actual para predicción...")
+    print("📅 Usando fecha actual para predicción...")
     hoy = datetime.today()
-    dia_semana_pred = hoy.weekday()  # 0 = lunes
+    dia_semana_pred = hoy.weekday()
     mes_pred = hoy.month
 
     combinaciones = df[['id_persona', 'id_horario']].drop_duplicates()
-    predicciones = []
+    ya_guardados = set()
 
+    print("🔮 Generando y guardando predicciones...")
     for _, row in combinaciones.iterrows():
+        id_persona = row['id_persona']
+        id_horario = row['id_horario']
+
+        # Evitar duplicados
+        if id_horario in ya_guardados:
+            continue
+
         nueva_clase = pd.DataFrame([{'dia_semana': dia_semana_pred, 'mes': mes_pred}])
-        proba = modelo.predict_proba(nueva_clase)[0][1]  # probabilidad de faltar
-        predicciones.append({
-            'id_persona': row['id_persona'],
-            'id_horario': row['id_horario'],
-            'proba_falta': proba
-        })
+        proba = modelo.predict_proba(nueva_clase)[0][1]  # Probabilidad de falta
 
-    top_faltas = sorted(predicciones, key=lambda x: x['proba_falta'], reverse=True)[:3]
-    top_asistencias = sorted(predicciones, key=lambda x: x['proba_falta'])[:3]
-    top_intermedios = sorted(predicciones, key=lambda x: abs(x['proba_falta'] - 0.5))[:3]
+        # Clasificación según probabilidad
+        if proba >= 0.85:
+            resultado = "FALTARÁ"
+        elif 0.4 <= proba < 0.85:
+            resultado = "INCIERTO / POSIBLE RETARDO"
+        else:
+            resultado = "NO FALTARÁ"
 
-    print("Guardando predicciones más probables de FALTAR:")
-    for pred in top_faltas:
-        guardar_prediccion(pred['id_persona'], pred['id_horario'], "FALTARÁ")
+        guardar_prediccion(id_persona, id_horario, resultado)
+        ya_guardados.add(id_horario)
 
-    print("Guardando predicciones más probables de ASISTIR:")
-    for pred in top_asistencias:
-        guardar_prediccion(pred['id_persona'], pred['id_horario'], "NO FALTARÁ")
+    print("✔ Predicciones guardadas correctamente.")
 
-    print("Guardando predicciones intermedias (posible retardo):")
-    for pred in top_intermedios:
-        guardar_prediccion(pred['id_persona'], pred['id_horario'], "INCIERTO / POSIBLE RETARDO")
-
-    print("Predicciones guardadas correctamente.")
 
 # Ejecutar si se llama directamente
 if __name__ == "__main__":
