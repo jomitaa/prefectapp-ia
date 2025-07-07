@@ -1,11 +1,12 @@
 import os
 import pandas as pd
 from urllib.parse import urlparse
-from datetime import date
+from datetime import date, datetime
 import mysql.connector
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
+# Conexión a la base de datos usando MYSQL_URL
 def conectar_db():
     mysql_url = os.getenv("MYSQL_URL")
     result = urlparse(mysql_url)
@@ -18,6 +19,7 @@ def conectar_db():
         port=result.port
     )
 
+# Consulta de datos de asistencia
 def obtener_datos():
     conexion = conectar_db()
     query = """
@@ -38,12 +40,12 @@ def obtener_datos():
     LEFT JOIN asistencia a ON a.id_horario = h.id_horario
     LEFT JOIN retardo r ON r.id_horario = h.id_horario AND r.fecha_retardo = a.fecha_asistencia
     LEFT JOIN falta f ON f.id_horario = h.id_horario AND f.fecha_falta = a.fecha_asistencia
-    WHERE h.id_escuela = 1
     """
     df = pd.read_sql(query, conexion)
     conexion.close()
     return df
 
+# Obtener id_escuela real a partir del id_horario
 def obtener_id_escuela(id_horario):
     conexion = conectar_db()
     cursor = conexion.cursor()
@@ -53,6 +55,7 @@ def obtener_id_escuela(id_horario):
     conexion.close()
     return result[0] if result else None
 
+# Borrar todas las predicciones existentes
 def borrar_todas_predicciones():
     conexion = conectar_db()
     cursor = conexion.cursor()
@@ -62,10 +65,11 @@ def borrar_todas_predicciones():
     conexion.close()
     print("✔ Todas las predicciones han sido borradas.")
 
+# Guardar una predicción
 def guardar_prediccion(id_persona, id_horario, resultado):
     id_escuela = obtener_id_escuela(id_horario)
     if id_escuela is None:
-        print(f"No se encontró el id_escuela para el horario {id_horario}")
+        print(f"❌ No se encontró el id_escuela para el horario {id_horario}")
         return
 
     conexion = conectar_db()
@@ -79,6 +83,7 @@ def guardar_prediccion(id_persona, id_horario, resultado):
     conexion.close()
     print(f"✔ Predicción guardada: {resultado} (persona {id_persona}, horario {id_horario}, escuela {id_escuela})")
 
+# Preparar datos para el modelo
 def preparar_datos(df):
     df = df.dropna(subset=['tipo_asistencia'])
     df['fecha_asistencia'] = pd.to_datetime(df['fecha_asistencia'])
@@ -86,38 +91,63 @@ def preparar_datos(df):
     df['mes'] = df['fecha_asistencia'].dt.month
 
     X = df[['dia_semana', 'mes']]
-    y = (df['tipo_asistencia'] == 0).astype(int)  # 1 = falta
+    y = (df['tipo_asistencia'] == 0).astype(int)  # 1 = falta, 0 = no falta
 
     return train_test_split(X, y, test_size=0.2, random_state=42)
 
+# Función principal
 def ejecutar():
-    print("Borrando todas las predicciones existentes...")
+    print("🧹 Borrando todas las predicciones existentes...")
     borrar_todas_predicciones()
 
-    print("Obteniendo datos de la base de datos...")
+    print("📥 Obteniendo datos de la base de datos...")
     df = obtener_datos()
     if df.empty:
-        print("No hay datos para entrenar el modelo.")
+        print("⚠ No hay datos para entrenar el modelo.")
         return
 
-    print("Preparando datos...")
+    print("📊 Preparando datos...")
     X_train, X_test, y_train, y_test = preparar_datos(df)
 
-    print("Entrenando modelo...")
+    print("🤖 Entrenando modelo...")
     modelo = RandomForestClassifier()
     modelo.fit(X_train, y_train)
 
-    print("Generando predicción de ejemplo para lunes de julio...")
-    nueva_clase = pd.DataFrame([{'dia_semana': 0, 'mes': 7}])
-    pred = modelo.predict(nueva_clase)
+    print("📅 Usando fecha actual para predicción...")
+    hoy = datetime.today()
+    dia_semana_pred = hoy.weekday()  # 0 = lunes
+    mes_pred = hoy.month
 
-    id_persona_ejemplo = int(df['id_persona'].iloc[-1])
-    id_horario_ejemplo = int(df['id_horario'].iloc[-1])
-    resultado = "FALTARÁ" if pred[0] == 1 else "NO FALTARÁ"
+    combinaciones = df[['id_persona', 'id_horario']].drop_duplicates()
+    predicciones = []
 
-    print(f"Guardando predicción: {resultado}")
-    guardar_prediccion(id_persona_ejemplo, id_horario_ejemplo, resultado)
-    print("Predicción guardada correctamente.")
+    for _, row in combinaciones.iterrows():
+        nueva_clase = pd.DataFrame([{'dia_semana': dia_semana_pred, 'mes': mes_pred}])
+        proba = modelo.predict_proba(nueva_clase)[0][1]  # probabilidad de faltar
+        predicciones.append({
+            'id_persona': row['id_persona'],
+            'id_horario': row['id_horario'],
+            'proba_falta': proba
+        })
 
+    top_faltas = sorted(predicciones, key=lambda x: x['proba_falta'], reverse=True)[:3]
+    top_asistencias = sorted(predicciones, key=lambda x: x['proba_falta'])[:3]
+    top_intermedios = sorted(predicciones, key=lambda x: abs(x['proba_falta'] - 0.5))[:3]
+
+    print("🔴 Guardando predicciones más probables de FALTAR:")
+    for pred in top_faltas:
+        guardar_prediccion(pred['id_persona'], pred['id_horario'], "FALTARÁ")
+
+    print("🟢 Guardando predicciones más probables de ASISTIR:")
+    for pred in top_asistencias:
+        guardar_prediccion(pred['id_persona'], pred['id_horario'], "NO FALTARÁ")
+
+    print("🟡 Guardando predicciones intermedias (posible retardo):")
+    for pred in top_intermedios:
+        guardar_prediccion(pred['id_persona'], pred['id_horario'], "INCIERTO / POSIBLE RETARDO")
+
+    print("✅ Predicciones guardadas correctamente.")
+
+# Ejecutar si se llama directamente
 if __name__ == "__main__":
     ejecutar()
