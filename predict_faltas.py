@@ -67,9 +67,11 @@ def borrar_todas_predicciones():
 
 # Guardar una predicción
 def guardar_prediccion(id_persona, id_horario, resultado):
+    id_persona = int(id_persona)
+    id_horario = int(id_horario)
     id_escuela = obtener_id_escuela(id_horario)
     if id_escuela is None:
-        print(f"❌ No se encontró el id_escuela para el horario {id_horario}")
+        print(f" No se encontró el id_escuela para el horario {id_horario}")
         return
 
     conexion = conectar_db()
@@ -77,12 +79,12 @@ def guardar_prediccion(id_persona, id_horario, resultado):
     cursor.execute("""
         INSERT INTO predicciones (id_persona, id_horario, id_escuela, fecha_prediccion, resultado_prediccion)
         VALUES (%s, %s, %s, %s, %s)
-    """, (id_persona, id_horario, id_escuela, date.today(), resultado))
+    """, (id_persona, id_horario, int(id_escuela), date.today(), resultado))
     conexion.commit()
     cursor.close()
     conexion.close()
-    print(f"✔ Predicción guardada: {resultado} (persona {id_persona}, horario {id_horario}, escuela {id_escuela})")
-
+    print(f" Predicción guardada: {resultado} (persona {id_persona}, horario {id_horario}, escuela {id_escuela})")
+    
 # Preparar datos para el modelo
 def preparar_datos(df):
     df = df.dropna(subset=['tipo_asistencia'])
@@ -97,23 +99,23 @@ def preparar_datos(df):
 
 # Función principal
 def ejecutar():
-    print("🧹 Borrando todas las predicciones existentes...")
+    print("Borrando todas las predicciones existentes...")
     borrar_todas_predicciones()
 
-    print("📥 Obteniendo datos de la base de datos...")
+    print("Obteniendo datos de la base de datos...")
     df = obtener_datos()
     if df.empty:
         print("⚠ No hay datos para entrenar el modelo.")
         return
 
-    print("📊 Preparando datos...")
+    print("Preparando datos...")
     X_train, X_test, y_train, y_test = preparar_datos(df)
 
     print("🤖 Entrenando modelo...")
     modelo = RandomForestClassifier()
     modelo.fit(X_train, y_train)
 
-    print("📅 Usando fecha actual para predicción...")
+    print("Usando fecha actual para predicción...")
     hoy = datetime.today()
     dia_semana_pred = hoy.weekday()  # 0 = lunes
     mes_pred = hoy.month
@@ -134,19 +136,19 @@ def ejecutar():
     top_asistencias = sorted(predicciones, key=lambda x: x['proba_falta'])[:3]
     top_intermedios = sorted(predicciones, key=lambda x: abs(x['proba_falta'] - 0.5))[:3]
 
-    print("🔴 Guardando predicciones más probables de FALTAR:")
+    print("Guardando predicciones más probables de FALTAR:")
     for pred in top_faltas:
         guardar_prediccion(pred['id_persona'], pred['id_horario'], "FALTARÁ")
 
-    print("🟢 Guardando predicciones más probables de ASISTIR:")
+    print("Guardando predicciones más probables de ASISTIR:")
     for pred in top_asistencias:
         guardar_prediccion(pred['id_persona'], pred['id_horario'], "NO FALTARÁ")
 
-    print("🟡 Guardando predicciones intermedias (posible retardo):")
+    print("Guardando predicciones intermedias (posible retardo):")
     for pred in top_intermedios:
         guardar_prediccion(pred['id_persona'], pred['id_horario'], "INCIERTO / POSIBLE RETARDO")
 
-    print("✅ Predicciones guardadas correctamente.")
+    print("Predicciones guardadas correctamente.")
 
 # Ejecutar si se llama directamente
 if __name__ == "__main__":
