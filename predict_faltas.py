@@ -118,11 +118,10 @@ def ejecutar():
 
     print("📅 Usando fecha actual para predicción...")
     hoy = datetime.today()
-    dia_semana_pred = hoy.weekday()  # lunes = 0
+    dia_semana_pred = hoy.weekday()
     mes_pred = hoy.month
 
     combinaciones = df[['id_persona', 'id_horario']].drop_duplicates()
-    
     predicciones_guardadas = 0
 
     for _, row in combinaciones.iterrows():
@@ -134,20 +133,21 @@ def ejecutar():
             'mes': mes_pred
         }])
 
-        proba_falta = modelo.predict_proba(nueva_clase)[0][1]  # probabilidad de falta
+        proba_falta = modelo.predict_proba(nueva_clase)[0][1]  # probabilidad de faltar
 
-        # Solo guardar predicciones confiables
-        if proba_falta >= 0.9:
+        if proba_falta >= 0.75:
             guardar_prediccion(id_persona, id_horario, "FALTARÁ")
             predicciones_guardadas += 1
-        elif proba_falta <= 0.1:
+        elif proba_falta <= 0.25:
             guardar_prediccion(id_persona, id_horario, "NO FALTARÁ")
             predicciones_guardadas += 1
-        # Si no es confiable, no guardamos nada
+        elif 0.45 <= proba_falta <= 0.55:
+            guardar_prediccion(id_persona, id_horario, "INCIERTO / POSIBLE RETARDO")
+            predicciones_guardadas += 1
+        # Los valores intermedios fuera de ese rango se descartan
 
     print(f"✅ Total de predicciones confiables guardadas: {predicciones_guardadas}")
 
-    print("Predicciones guardadas correctamente.")
 
 # Ejecutar si se llama directamente
 if __name__ == "__main__":
