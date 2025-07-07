@@ -1,0 +1,29 @@
+name: Ejecutar predicción diaria
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # Todos los días a las 6 AM hora CDMX
+  workflow_dispatch:
+
+jobs:
+  run-prediction:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Clonar el repositorio
+      uses: actions/checkout@v3
+
+    - name: Configurar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Instalar dependencias
+      run: |
+        pip install -r requirements.txt
+
+    - name: Ejecutar predicción
+      env:
+        MYSQL_URL: ${{ secrets.MYSQL_URL }}
+      run: |
+        python predict_faltas.py
