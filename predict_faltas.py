@@ -98,17 +98,18 @@ def preparar_datos(df):
     return train_test_split(X, y, test_size=0.2, random_state=42)
 
 # Función principal
+# Función principal
 def ejecutar():
-    print("Borrando todas las predicciones existentes...")
+    print("🧹 Borrando todas las predicciones existentes...")
     borrar_todas_predicciones()
 
-    print("Obteniendo datos de la base de datos...")
+    print("📥 Obteniendo datos de la base de datos...")
     df = obtener_datos()
     if df.empty:
         print("⚠ No hay datos para entrenar el modelo.")
         return
 
-    print("Preparando datos...")
+    print("📊 Preparando datos...")
     X_train, X_test, y_train, y_test = preparar_datos(df)
 
     print("🤖 Entrenando modelo...")
@@ -117,37 +118,36 @@ def ejecutar():
 
     print("📅 Usando fecha actual para predicción...")
     hoy = datetime.today()
-    dia_semana_pred = hoy.weekday()
+    dia_semana_pred = hoy.weekday()  # lunes = 0
     mes_pred = hoy.month
 
     combinaciones = df[['id_persona', 'id_horario']].drop_duplicates()
-    ya_guardados = set()
+    
+    predicciones_guardadas = 0
 
-    print("🔮 Generando y guardando predicciones...")
     for _, row in combinaciones.iterrows():
         id_persona = row['id_persona']
         id_horario = row['id_horario']
 
-        # Evitar duplicados
-        if id_horario in ya_guardados:
-            continue
+        nueva_clase = pd.DataFrame([{
+            'dia_semana': dia_semana_pred,
+            'mes': mes_pred
+        }])
 
-        nueva_clase = pd.DataFrame([{'dia_semana': dia_semana_pred, 'mes': mes_pred}])
-        proba = modelo.predict_proba(nueva_clase)[0][1]  # Probabilidad de falta
+        proba_falta = modelo.predict_proba(nueva_clase)[0][1]  # probabilidad de falta
 
-        # Clasificación según probabilidad
-        if proba >= 0.85:
-            resultado = "FALTARÁ"
-        elif 0.4 <= proba < 0.85:
-            resultado = "INCIERTO / POSIBLE RETARDO"
-        else:
-            resultado = "NO FALTARÁ"
+        # Solo guardar predicciones confiables
+        if proba_falta >= 0.9:
+            guardar_prediccion(id_persona, id_horario, "FALTARÁ")
+            predicciones_guardadas += 1
+        elif proba_falta <= 0.1:
+            guardar_prediccion(id_persona, id_horario, "NO FALTARÁ")
+            predicciones_guardadas += 1
+        # Si no es confiable, no guardamos nada
 
-        guardar_prediccion(id_persona, id_horario, resultado)
-        ya_guardados.add(id_horario)
+    print(f"✅ Total de predicciones confiables guardadas: {predicciones_guardadas}")
 
-    print("✔ Predicciones guardadas correctamente.")
-
+    print("Predicciones guardadas correctamente.")
 
 # Ejecutar si se llama directamente
 if __name__ == "__main__":
