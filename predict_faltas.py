@@ -1,27 +1,63 @@
 import os
 import pandas as pd
+from urllib.parse import urlparse
 from datetime import date, datetime
+import mysql.connector
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sqlalchemy import create_engine
 
-# Configuración de predicción
-UMBRAL_FALTA = 0.65  # Probabilidad mínima para predecir falta
-UMBRAL_RETARDO = 0.35  # Probabilidad mínima para predecir retardo
-
-# Conexión a la base de datos usando SQLAlchemy
+# Conexión a la base de datos usando MYSQL_URL
 def conectar_db():
     mysql_url = os.getenv("MYSQL_URL")
-    return create_engine(mysql_url)
+    result = urlparse(mysql_url)
 
-# Obtener datos históricos de asistencia
+    return mysql.connector.connect(
+        host=result.hostname,
+        user=result.username,
+        password=result.password,
+        database=result.path[1:],
+        port=result.port
+    )
+
+
+# Consulta de datos de asistencia
 def obtener_datos():
-    engine = conectar_db()
+    conexion = conectar_db()
     
-    # Determinar periodo actual
-    hoy = datetime.now()
-    periodo = 1 if (hoy.month >= 8 or hoy.month <= 1) else 2
+    # Obtener el periodo actual (similar a tu lógica en JavaScript)
+    fecha_actual = datetime.now()
+    anio = fecha_actual.year
+    mes = fecha_actual.month
+    periodo = 1 if (mes >= 8 or mes <= 1) else 2
     
+    # Primero obtener el id_periodo actual
+    query_periodo = """
+    SELECT id_periodo FROM periodos WHERE anio = %s AND periodo = %s
+    """
+    cursor = conexion.cursor()
+    cursor.execute(query_periodo, (anio, periodo))
+    periodo_rows = cursor.fetchall()
+    
+    if not periodo_rows:
+        conexion.close()
+        raise Exception('No existe el periodo actual.')
+    
+    id_periodo = periodo_rows[0][0]
+    
+    # Obtener el id_contenedor del periodo actual
+    query_contenedor = """
+    SELECT id_contenedor FROM contenedor WHERE id_periodo = %s
+    """
+    cursor.execute(query_contenedor, (id_periodo,))
+    contenedor_rows = cursor.fetchall()
+    
+    if not contenedor_rows:
+        conexion.close()
+        raise Exception('No existe un contenedor para el periodo actual.')
+    
+    id_contenedor = contenedor_rows[0][0]
+    
+    # Consulta principal filtrada por el contenedor actual
     query = """
     SELECT
         p.id_persona,
@@ -30,9 +66,9 @@ def obtener_datos():
         h.hora_inicio,
         a.fecha_asistencia,
         CASE
-            WHEN a.validacion_asistencia = 1 THEN 2  # Asistencia
-            WHEN r.validacion_retardo = 1 THEN 1     # Retardo
-            WHEN f.validacion_falta = 1 THEN 0       # Falta
+            WHEN a.validacion_asistencia = 1 THEN 2
+            WHEN r.validacion_retardo = 1 THEN 1
+            WHEN f.validacion_falta = 1 THEN 0
             ELSE NULL
         END AS tipo_asistencia
     FROM horario h
@@ -40,152 +76,114 @@ def obtener_datos():
     LEFT JOIN asistencia a ON a.id_horario = h.id_horario
     LEFT JOIN retardo r ON r.id_horario = h.id_horario AND r.fecha_retardo = a.fecha_asistencia
     LEFT JOIN falta f ON f.id_horario = h.id_horario AND f.fecha_falta = a.fecha_asistencia
-    WHERE h.id_contenedor = (
-        SELECT id_contenedor FROM contenedor WHERE id_periodo = (
-            SELECT id_periodo FROM periodos 
-            WHERE anio = %s AND periodo = %s
-        )
-    )
+    WHERE h.id_contenedor = %s
     """
     
-    df = pd.read_sql(query, engine, params=(hoy.year, periodo))
+    df = pd.read_sql(query, conexion, params=(id_contenedor,))
+    cursor.close()
+    conexion.close()
     return df
-
-# Obtener id_escuela para un horario
+# Obtener id_escuela real a partir del id_horario
 def obtener_id_escuela(id_horario):
-    engine = conectar_db()
-    result = pd.read_sql(
-        "SELECT id_escuela FROM horario WHERE id_horario = %s", 
-        engine, params=(id_horario,)
-    )
-    return result.iloc[0, 0] if not result.empty else None
+    conexion = conectar_db()
+    cursor = conexion.cursor()
+    cursor.execute("SELECT id_escuela FROM horario WHERE id_horario = %s", (id_horario,))
+    result = cursor.fetchone()
+    cursor.close()
+    conexion.close()
+    return result[0] if result else None
 
-# Borrar predicciones anteriores
-def borrar_predicciones():
-    engine = conectar_db()
-    with engine.begin() as conn:
-        conn.execute("DELETE FROM predicciones")
-    print("Predicciones anteriores borradas.")
+# Borrar todas las predicciones existentes
+def borrar_todas_predicciones():
+    conexion = conectar_db()
+    cursor = conexion.cursor()
+    cursor.execute("DELETE FROM predicciones")
+    conexion.commit()
+    cursor.close()
+    conexion.close()
+    print("✔ Todas las predicciones han sido borradas.")
 
-# Guardar nueva predicción
+# Guardar una predicción
 def guardar_prediccion(id_persona, id_horario, resultado):
+    id_persona = int(id_persona)
+    id_horario = int(id_horario)
     id_escuela = obtener_id_escuela(id_horario)
     if id_escuela is None:
-        print(f"⚠ No se encontró escuela para horario {id_horario}")
+        print(f" No se encontró el id_escuela para el horario {id_horario}")
         return
 
-    engine = conectar_db()
-    with engine.begin() as conn:
-        conn.execute(
-            "INSERT INTO predicciones VALUES (%s, %s, %s, %s, %s)",
-            (id_persona, id_horario, id_escuela, date.today(), resultado)
-        )
-    print(f"✅ Predicción guardada: {resultado} (Persona: {id_persona}, Horario: {id_horario})")
-
+    conexion = conectar_db()
+    cursor = conexion.cursor()
+    cursor.execute("""
+        INSERT INTO predicciones (id_persona, id_horario, id_escuela, fecha_prediccion, resultado_prediccion)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (id_persona, id_horario, int(id_escuela), date.today(), resultado))
+    conexion.commit()
+    cursor.close()
+    conexion.close()
+    print(f" Predicción guardada: {resultado} (persona {id_persona}, horario {id_horario}, escuela {id_escuela})")
+    
 # Preparar datos para el modelo
 def preparar_datos(df):
     df = df.dropna(subset=['tipo_asistencia'])
-    
-    # Convertir fechas y horas
     df['fecha_asistencia'] = pd.to_datetime(df['fecha_asistencia'])
     df['dia_semana'] = df['fecha_asistencia'].dt.dayofweek
     df['mes'] = df['fecha_asistencia'].dt.month
-    
-    # Convertir hora_inicio a formato numérico (horas)
-    if pd.api.types.is_timedelta64_dtype(df['hora_inicio']):
-        df['hora_inicio'] = df['hora_inicio'].dt.components['hours']
-    else:
-        df['hora_inicio'] = pd.to_datetime(df['hora_inicio']).dt.hour
 
-    # Preparar características (X) y variable objetivo (y)
-    X = df[['dia_semana', 'mes', 'hora_inicio']]
-    y = df['tipo_asistencia']  # 0=Falta, 1=Retardo, 2=Asistencia
-    
+    # Usamos directamente la columna tipo_asistencia (0=falta, 1=retardo, 2=asistencia)
+    X = df[['dia_semana', 'mes']]
+    y = df['tipo_asistencia']
+
     return train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Obtener horarios para el día actual
-def obtener_horarios_hoy():
-    hoy = datetime.now()
-    dia_nombre = hoy.strftime('%A').capitalize()
-    periodo = 1 if (hoy.month >= 8 or hoy.month <= 1) else 2
-    
-    engine = conectar_db()
-    query = """
-    SELECT h.id_horario, h.id_persona, h.hora_inicio 
-    FROM horario h 
-    WHERE h.dia_horario = %s AND h.id_contenedor = (
-        SELECT id_contenedor FROM contenedor WHERE id_periodo = (
-            SELECT id_periodo FROM periodos 
-            WHERE anio = %s AND periodo = %s
-        )
-    )
-    """
-    return pd.read_sql(query, engine, params=(dia_nombre, hoy.year, periodo))
-
-# Función principal
+# Función principal modificada (solo la parte de predicción)
 def ejecutar():
-    print("🚀 Iniciando proceso de predicción de asistencia")
-    
-    # 1. Limpiar predicciones anteriores
-    borrar_predicciones()
-    
-    # 2. Obtener datos históricos
-    print("📊 Obteniendo datos históricos...")
+    print("Borrando todas las predicciones existentes...")
+    borrar_todas_predicciones()
+
+    print("Obteniendo datos de la base de datos...")
     df = obtener_datos()
     if df.empty:
-        print("⚠ No hay datos suficientes para entrenar el modelo")
+        print("⚠ No hay datos para entrenar el modelo.")
         return
-    
-    # 3. Preparar datos para el modelo
-    print("🧠 Preparando datos para el modelo...")
+
+    print("Preparando datos...")
     X_train, X_test, y_train, y_test = preparar_datos(df)
-    
-    # 4. Entrenar modelo
-    print("🤖 Entrenando modelo Random Forest...")
-    modelo = RandomForestClassifier(n_estimators=100, random_state=42)
+
+    print("🤖 Entrenando modelo multiclase...")
+    modelo = RandomForestClassifier()
     modelo.fit(X_train, y_train)
-    print(f"📈 Precisión del modelo: {modelo.score(X_test, y_test):.2%}")
+
+    print("Usando fecha actual para predicción...")
+    hoy = datetime.today()
+    dia_semana_pred = hoy.weekday()
+    mes_pred = hoy.month
+
+    # Obtener todos los horarios únicos
+    combinaciones = df[['id_persona', 'id_horario']].drop_duplicates()
     
-    # 5. Obtener horarios para hoy
-    print("🕒 Obteniendo horarios para hoy...")
-    horarios_hoy = obtener_horarios_hoy()
-    if horarios_hoy.empty:
-        print("⚠ No hay clases programadas para hoy")
-        return
-    
-    # 6. Realizar predicciones
-    print("🔮 Generando predicciones...")
-    hoy = datetime.now()
-    total_faltas = 0
-    total_retardos = 0
-    
-    for _, row in horarios_hoy.iterrows():
-        # Preparar datos para predicción
-        hora_inicio = row['hora_inicio']
-        if pd.api.types.is_timedelta64_dtype(horarios_hoy['hora_inicio']):
-            hora_num = hora_inicio.components['hours']
-        else:
-            hora_num = pd.to_datetime(hora_inicio).hour if hora_inicio else 8
-        
-        datos_pred = pd.DataFrame([{
-            'dia_semana': hoy.weekday(),
-            'mes': hoy.month,
-            'hora_inicio': hora_num
+    # Umbrales para predicciones
+    UMBRAL_FALTA = 0.6  # 60% probabilidad de falta
+    UMBRAL_RETARDO = 0.4  # 40% probabilidad de retardo
+
+    print("Realizando predicciones para todos los horarios...")
+    for _, row in combinaciones.iterrows():
+        datos_prediccion = pd.DataFrame([{
+            'dia_semana': dia_semana_pred,
+            'mes': mes_pred
         }])
         
-        # Obtener probabilidades
-        probas = modelo.predict_proba(datos_pred)[0]
+        # Obtener probabilidades para cada clase [P(falta), P(retardo), P(asistencia)]
+        probabilidades = modelo.predict_proba(datos_prediccion)[0]
         
-        # Tomar decisión basada en umbrales
-        if probas[0] >= UMBRAL_FALTA:  # Falta
+        # Solo guardar faltas y retardos significativos
+        if probabilidades[0] >= UMBRAL_FALTA:
             guardar_prediccion(row['id_persona'], row['id_horario'], "FALTARÁ")
-            total_faltas += 1
-        elif probas[1] >= UMBRAL_RETARDO:  # Retardo
+        elif probabilidades[1] >= UMBRAL_RETARDO:
             guardar_prediccion(row['id_persona'], row['id_horario'], "POSIBLE RETARDO")
-            total_retardos += 1
         # No guardamos asistencias previstas
-    
-    print(f"\n✅ Proceso completado: {total_faltas} faltas y {total_retardos} retardos predichos")
+
+    print("✅ Predicciones guardadas correctamente (solo faltas y retardos significativos)")
 
 if __name__ == "__main__":
     ejecutar()
