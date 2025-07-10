@@ -163,8 +163,8 @@ def ejecutar():
     combinaciones = df[['id_persona', 'id_horario']].drop_duplicates()
     
     # Umbrales para predicciones
-    UMBRAL_FALTA = 0.6  # 60% probabilidad de falta
-    UMBRAL_RETARDO = 0.4  # 40% probabilidad de retardo
+    UMBRAL_FALTA = 0.4  # 60% probabilidad de falta
+    UMBRAL_RETARDO = 0.2  # 40% probabilidad de retardo
 
     print("Realizando predicciones para todos los horarios...")
     for _, row in combinaciones.iterrows():
